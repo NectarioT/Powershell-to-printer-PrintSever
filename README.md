@@ -28,8 +28,9 @@ prefix.
   print server. Normal domain users usually do.
 - Run **non-elevated** as the user who should receive the printers — printer
   connections are per-user, and elevating installs them for the admin account.
-- If your execution policy blocks scripts, launch with
-  `powershell -ExecutionPolicy Bypass -File .\Connect-ADPrintServer.ps1 ...`.
+- If your execution policy blocks scripts, see
+  [Running the script (execution policy)](#running-the-script-execution-policy)
+  below — easiest is the included `.cmd` wrapper.
 
 ## Quick reference
 
@@ -46,6 +47,60 @@ prefix.
 | Reinstall existing           | `... -Force` |
 
 Run `Get-Help .\Connect-ADPrintServer.ps1 -Full` for full parameter docs.
+
+## Running the script (execution policy)
+
+By default Windows refuses to run unsigned PowerShell scripts. If you see:
+
+> *Connect-ADPrintServer.ps1 is not digitally signed. You cannot run this
+> script on the current system.*
+
+…you need to either bypass the policy for this run, or unblock the file.
+Pick the option that fits the workstation:
+
+### Option A — use the included `.cmd` wrapper *(easiest)*
+
+[`Run-Connect-ADPrintServer.cmd`](./Run-Connect-ADPrintServer.cmd) launches
+PowerShell with `-ExecutionPolicy Bypass` for a single invocation, no system
+changes. Forwards every argument to the script:
+
+```cmd
+Run-Connect-ADPrintServer.cmd -Test -LocalIP 10.26.26.47
+Run-Connect-ADPrintServer.cmd -PrintServer PRINTSRV01 -AutoDetect
+```
+
+You can double-click it from File Explorer too — it'll fall back to
+`-Test` if you've added that as the default in your own copy.
+
+### Option B — one-shot bypass from PowerShell
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Connect-ADPrintServer.ps1 -Test
+```
+
+### Option C — clear the "downloaded from internet" flag
+
+When you grab the script from GitHub or email, Windows stamps it with a
+*Mark of the Web* (MOTW). Even with `RemoteSigned` policy that's enough to
+block it. Strip the marker once, then run normally:
+
+```powershell
+Unblock-File .\Connect-ADPrintServer.ps1
+.\Connect-ADPrintServer.ps1 -Test
+```
+
+### Option D — change policy for the user *(persistent)*
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+`RemoteSigned` lets locally created/unblocked scripts run. Combine with
+`Unblock-File` for downloaded copies.
+
+> Avoid `Set-ExecutionPolicy Bypass` machine-wide; it disables a real
+> security control. The wrapper or `-Scope CurrentUser RemoteSigned`
+> covers normal day-to-day use.
 
 ## Testing the script per computer
 
