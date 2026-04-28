@@ -38,6 +38,11 @@
 .PARAMETER PromptForBuilding
     Prompt the operator to type a building code instead of detecting from IP.
 
+.PARAMETER LocalIP
+    Pretend the local computer has this IPv4 address and derive the building
+    prefix from it. Mainly useful for testing without changing real network
+    config (e.g. -LocalIP 10.26.26.47 -> prefix "2626"). Validated as IPv4.
+
 .PARAMETER Test
     Run in offline test mode: skips reachability checks, uses a hard-coded list
     of fake shared printers, and only simulates Add-Printer / SetDefaultPrinter.
@@ -72,6 +77,14 @@
 .EXAMPLE
     # Offline test of auto-detect against a specific prefix, no real install.
     .\Connect-ADPrintServer.ps1 -Test -BuildingPrefix 2626
+
+.EXAMPLE
+    # Offline test simulating the workstation in building 2626.
+    .\Connect-ADPrintServer.ps1 -Test -LocalIP 10.26.26.47
+
+.EXAMPLE
+    # Offline test simulating a different building's workstation.
+    .\Connect-ADPrintServer.ps1 -Test -LocalIP 10.10.10.50
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Interactive')]
@@ -97,6 +110,14 @@ param(
     [Parameter(ParameterSetName = 'Auto')]
     [switch]$PromptForBuilding,
 
+    [Parameter(ParameterSetName = 'Auto')]
+    [ValidateScript({
+        $parsed = $null
+        if ([System.Net.IPAddress]::TryParse($_, [ref]$parsed) -and $parsed.AddressFamily -eq 'InterNetwork') { $true }
+        else { throw "Not a valid IPv4 address: '$_'" }
+    })]
+    [string]$LocalIP,
+
     [string]$SetDefault,
 
     [switch]$Force,
@@ -114,19 +135,29 @@ function Resolve-PrintServerName {
 }
 
 function Get-LocalBuildingNumber {
-    # Pick the active 10.x.x.x IPv4 address and concatenate octets 2 and 3.
-    $candidates = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-        Where-Object { $_.IPAddress -like '10.*' -and $_.AddressState -eq 'Preferred' }
-    if (-not $candidates) {
-        throw "No active 10.x.x.x IPv4 address found on this computer. Use -BuildingPrefix to specify one manually."
+    # Concatenate octets 2 and 3 of an IPv4 address. Uses -FromIP if given,
+    # otherwise picks the active 10.x.x.x address from the local NICs.
+    param([string]$FromIP)
+
+    if ($FromIP) {
+        $ip = $FromIP
+        Write-Host "Local IP (supplied): $ip" -ForegroundColor Cyan
+    } else {
+        $candidates = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPAddress -like '10.*' -and $_.AddressState -eq 'Preferred' }
+        if (-not $candidates) {
+            throw "No active 10.x.x.x IPv4 address found on this computer. Use -LocalIP, -BuildingPrefix, or -PromptForBuilding."
+        }
+        $chosen = @($candidates)[0]
+        if (@($candidates).Count -gt 1) {
+            $list = ($candidates | ForEach-Object { $_.IPAddress }) -join ', '
+            Write-Warning "Multiple 10.x addresses found ($list). Using $($chosen.IPAddress). Override with -LocalIP or -BuildingPrefix if wrong."
+        }
+        $ip = $chosen.IPAddress
+        Write-Host "Local IP: $ip" -ForegroundColor Cyan
     }
-    $chosen = @($candidates)[0]
-    if (@($candidates).Count -gt 1) {
-        $list = ($candidates | ForEach-Object { $_.IPAddress }) -join ', '
-        Write-Warning "Multiple 10.x addresses found ($list). Using $($chosen.IPAddress). Override with -BuildingPrefix if wrong."
-    }
-    $octets = $chosen.IPAddress -split '\.'
-    Write-Host "Local IP: $($chosen.IPAddress)" -ForegroundColor Cyan
+
+    $octets = $ip -split '\.'
     return '{0}{1}' -f $octets[1], $octets[2]
 }
 
@@ -285,6 +316,8 @@ $selected = switch ($PSCmdlet.ParameterSetName) {
                     throw "Building number is required."
                 }
                 $entered.Trim()
+            } elseif ($LocalIP) {
+                Get-LocalBuildingNumber -FromIP $LocalIP
             } else {
                 Get-LocalBuildingNumber
             }
