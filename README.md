@@ -16,7 +16,7 @@ prefix.
 
 | Workstation IP | Building prefix | Matching shares                       |
 |----------------|-----------------|---------------------------------------|
-| `10.26.26.47`  | `2626`          | `2626_Credentialing`, `2626_Reception`|
+| `10.65.65.47`  | `6565`          | `6565_Credentialing`, `6565_Reception`|
 | `10.10.10.50`  | `1010`          | `1010_Lab`, `1010_Reception`          |
 
 ## Prerequisites
