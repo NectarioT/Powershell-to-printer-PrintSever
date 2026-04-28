@@ -26,6 +26,15 @@
 .PARAMETER SetDefault
     Share name of the printer to set as the default after installation.
 
+.PARAMETER AutoDetect
+    Detect the local computer's building number from its 10.x.x.x IPv4 address by
+    concatenating the second and third octets (e.g. 10.26.26.47 -> "2626"), then
+    install every shared printer whose share name starts with that prefix.
+
+.PARAMETER BuildingPrefix
+    Override the auto-detected building number. Useful on VPN or for testing
+    (e.g. -BuildingPrefix 2626). Implies -AutoDetect.
+
 .PARAMETER Force
     Reinstall a connection even if it already exists.
 
@@ -38,6 +47,14 @@
 .EXAMPLE
     .\Connect-ADPrintServer.ps1 -PrintServer PRINTSRV01.contoso.local `
         -PrinterName 'HR-Color','Finance-*' -SetDefault 'HR-Color'
+
+.EXAMPLE
+    # On a workstation with IP 10.26.26.47, install every printer whose share
+    # name starts with "2626" (e.g. 2626_Credentialing, 2626_Reception).
+    .\Connect-ADPrintServer.ps1 -PrintServer PRINTSRV01 -AutoDetect
+
+.EXAMPLE
+    .\Connect-ADPrintServer.ps1 -PrintServer PRINTSRV01 -BuildingPrefix 2626
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Interactive')]
@@ -54,6 +71,12 @@ param(
     [Parameter(ParameterSetName = 'Interactive')]
     [switch]$Interactive,
 
+    [Parameter(ParameterSetName = 'Auto')]
+    [switch]$AutoDetect,
+
+    [Parameter(ParameterSetName = 'Auto')]
+    [string]$BuildingPrefix,
+
     [string]$SetDefault,
 
     [switch]$Force
@@ -66,6 +89,23 @@ function Resolve-PrintServerName {
         throw "PrintServer name is empty."
     }
     return $clean
+}
+
+function Get-LocalBuildingNumber {
+    # Pick the active 10.x.x.x IPv4 address and concatenate octets 2 and 3.
+    $candidates = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -like '10.*' -and $_.AddressState -eq 'Preferred' }
+    if (-not $candidates) {
+        throw "No active 10.x.x.x IPv4 address found on this computer. Use -BuildingPrefix to specify one manually."
+    }
+    $chosen = @($candidates)[0]
+    if (@($candidates).Count -gt 1) {
+        $list = ($candidates | ForEach-Object { $_.IPAddress }) -join ', '
+        Write-Warning "Multiple 10.x addresses found ($list). Using $($chosen.IPAddress). Override with -BuildingPrefix if wrong."
+    }
+    $octets = $chosen.IPAddress -split '\.'
+    Write-Host "Local IP: $($chosen.IPAddress)" -ForegroundColor Cyan
+    return '{0}{1}' -f $octets[1], $octets[2]
 }
 
 function Test-PrintServerReachable {
@@ -169,10 +209,21 @@ Write-Host ("Found {0} shared printer(s)." -f $shared.Count) -ForegroundColor Cy
 $selected = switch ($PSCmdlet.ParameterSetName) {
     'All'         { $shared }
     'ByName'      {
-        $matches = foreach ($pattern in $PrinterName) {
+        $nameMatches = foreach ($pattern in $PrinterName) {
             $shared | Where-Object { $_.ShareName -like $pattern -or $_.Name -like $pattern }
         }
-        $matches | Sort-Object ShareName -Unique
+        $nameMatches | Sort-Object ShareName -Unique
+    }
+    'Auto'        {
+        $prefix = if ($BuildingPrefix) { $BuildingPrefix } else { Get-LocalBuildingNumber }
+        Write-Host "Building prefix: $prefix" -ForegroundColor Cyan
+        $buildingMatches = $shared | Where-Object {
+            $_.ShareName -like "$prefix*" -or $_.Name -like "$prefix*"
+        }
+        if (-not $buildingMatches) {
+            throw "No printers on '$server' have a name starting with '$prefix'."
+        }
+        $buildingMatches | Sort-Object ShareName
     }
     default {
         $shared |
