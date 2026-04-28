@@ -34,17 +34,22 @@ prefix.
 
 ## Quick reference
 
+`-PrintServer` defaults to **`azr01print01`**, so you only need to pass it
+when targeting a different server. Under `-Test`, the default flips to
+`TESTSRV01` (still overridable).
+
 | Mode | Command |
 |---|---|
-| Interactive picker (default) | `.\Connect-ADPrintServer.ps1 -PrintServer PRINTSRV01` |
-| Install everything | `... -PrintServer PRINTSRV01 -All` |
-| By name (wildcards OK)       | `... -PrintServer PRINTSRV01 -PrinterName 'HR-*','2626_Credentialing'` |
-| Auto-detect from local IP    | `... -PrintServer PRINTSRV01 -AutoDetect` |
-| Manual building prefix       | `... -PrintServer PRINTSRV01 -BuildingPrefix 2626` |
-| Prompt for building          | `... -PrintServer PRINTSRV01 -PromptForBuilding` |
-| Pretend a different IP       | `... -PrintServer PRINTSRV01 -LocalIP 10.26.26.47` |
-| Set default after install    | `... -SetDefault 2626_Credentialing` |
-| Reinstall existing           | `... -Force` |
+| Interactive picker (default)   | `.\Connect-ADPrintServer.ps1` |
+| Install everything             | `.\Connect-ADPrintServer.ps1 -All` |
+| By name (wildcards OK)         | `.\Connect-ADPrintServer.ps1 -PrinterName 'HR-*','2626_Credentialing'` |
+| Auto-detect from local IP      | `.\Connect-ADPrintServer.ps1 -AutoDetect` |
+| Manual building prefix         | `.\Connect-ADPrintServer.ps1 -BuildingPrefix 2626` |
+| Prompt for building            | `.\Connect-ADPrintServer.ps1 -PromptForBuilding` |
+| Pretend a different IP         | `.\Connect-ADPrintServer.ps1 -LocalIP 10.26.26.47` |
+| Different print server         | `.\Connect-ADPrintServer.ps1 -PrintServer OTHERSRV -AutoDetect` |
+| Set default after install      | `.\Connect-ADPrintServer.ps1 -AutoDetect -SetDefault 2626_Credentialing` |
+| Reinstall existing             | `.\Connect-ADPrintServer.ps1 -AutoDetect -Force` |
 
 Run `Get-Help .\Connect-ADPrintServer.ps1 -Full` for full parameter docs.
 

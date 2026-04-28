@@ -10,7 +10,8 @@
 
 .PARAMETER PrintServer
     Hostname (or FQDN) of the AD print server. Accepts forms like "PRINTSRV01",
-    "PRINTSRV01.contoso.local", or "\\PRINTSRV01".
+    "PRINTSRV01.contoso.local", or "\\PRINTSRV01". Defaults to "azr01print01"
+    when omitted (or to "TESTSRV01" if -Test is supplied without a server).
 
 .PARAMETER PrinterName
     One or more printer share names to install. Wildcards are supported. If omitted,
@@ -53,6 +54,14 @@
     Reinstall a connection even if it already exists.
 
 .EXAMPLE
+    # Uses the default print server (azr01print01); pick printers interactively.
+    .\Connect-ADPrintServer.ps1
+
+.EXAMPLE
+    # Uses the default print server; install every match for the local building.
+    .\Connect-ADPrintServer.ps1 -AutoDetect
+
+.EXAMPLE
     .\Connect-ADPrintServer.ps1 -PrintServer PRINTSRV01 -Interactive
 
 .EXAMPLE
@@ -90,7 +99,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Interactive')]
 param(
     [Parameter(Position = 0)]
-    [string]$PrintServer,
+    [string]$PrintServer = 'azr01print01',
 
     [Parameter(ParameterSetName = 'ByName')]
     [string[]]$PrinterName,
@@ -270,17 +279,13 @@ function Set-DefaultPrinterByConnection {
 
 if ($Test) {
     Write-Host "=== TEST MODE: no real print server will be contacted ===" -ForegroundColor Yellow
+    if (-not $PSBoundParameters.ContainsKey('PrintServer')) {
+        $PrintServer = 'TESTSRV01'
+    }
 }
 
-if (-not $PrintServer) {
-    if ($Test) {
-        $PrintServer = 'TESTSRV01'
-    } else {
-        $PrintServer = Read-Host 'Enter print server name (e.g. PRINTSRV01)'
-        if ([string]::IsNullOrWhiteSpace($PrintServer)) {
-            throw "PrintServer is required. Re-run with -PrintServer <name> (or pass -Test for offline testing)."
-        }
-    }
+if ([string]::IsNullOrWhiteSpace($PrintServer)) {
+    throw "PrintServer is required. Pass -PrintServer <name> (or -Test for offline testing)."
 }
 
 $server = Resolve-PrintServerName -Name $PrintServer
