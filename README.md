@@ -161,6 +161,121 @@ desk, or verify the mock data covers the buildings you care about.
    printers are present.
 5. *(Optional)* re-run with `-SetDefault <share>` to pin a default.
 
+### Reference: what `-Test` mode short-circuits
+
+When you pass `-Test`, the script swaps these calls for in-process
+no-ops / fixtures so it runs anywhere, even with no network at all:
+
+| Real call | Replaced with under `-Test` |
+|---|---|
+| `Test-Connection <server>` (reachability ping) | *skipped* |
+| `Get-Printer -ComputerName <server>` | `Get-MockSharedPrinter` (built-in fixture, see next table) |
+| `Get-CimInstance Win32_Printer -ComputerName <server>` (WMI fallback) | not invoked |
+| `Get-Printer` (existing-connection lookup) | empty list |
+| `Add-Printer -ConnectionName \\<server>\<share>` | yellow `[TEST] Would connect: …` log line; returns `Status = TestSimulated` |
+| `Win32_Printer.SetDefaultPrinter` | yellow `[TEST] Would set default printer to: …` log line |
+| `-PrintServer` parameter | defaults to `TESTSRV01` if not supplied |
+
+`Get-NetIPAddress` is the only system call still made, and only when
+`-AutoDetect` runs without `-LocalIP`. `-LocalIP` skips it entirely.
+
+### Reference: mock printer dataset
+
+Every `-Test` run uses this fixed list. Pick `-LocalIP` / `-BuildingPrefix`
+values whose prefix matches one of these to exercise the matching path:
+
+| ShareName            | DriverName                 | Location            | PortName        |
+|----------------------|----------------------------|---------------------|-----------------|
+| `2626_Credentialing` | HP Universal Printing PCL 6| Bldg 2626 Floor 2   | IP_10.26.26.100 |
+| `2626_Reception`     | HP Universal Printing PCL 6| Bldg 2626 Lobby     | IP_10.26.26.101 |
+| `2626_Pharmacy`      | HP Universal Printing PCL 6| Bldg 2626 Floor 1   | IP_10.26.26.102 |
+| `1010_Lab`           | HP Universal Printing PCL 6| Bldg 1010 Floor 3   | IP_10.10.10.50  |
+| `1010_Reception`     | HP Universal Printing PCL 6| Bldg 1010 Lobby     | IP_10.10.10.51  |
+| `HR-Color`           | Xerox WorkCentre           | HR Office           | IP_10.5.5.5     |
+
+To extend the fixture, edit the `Get-MockSharedPrinter` function in
+[`Connect-ADPrintServer.ps1`](./Connect-ADPrintServer.ps1).
+
+### Reference: test-related parameters
+
+| Parameter | What it does | Use when |
+|---|---|---|
+| `-Test` | Activates all the short-circuits above. Composes with any selection mode. | Always while developing or rehearsing. |
+| `-AutoDetect` | Reads the local 10.x.x.x NIC, builds prefix from octets 2+3. | Real deployments; verifying a workstation's NIC reports the right building. |
+| `-LocalIP <ipv4>` | Pretends the local computer has this IP, derives prefix from it. Validated as IPv4. | Rehearsing other buildings without leaving your desk. |
+| `-BuildingPrefix <str>` | Skips IP entirely; uses this prefix verbatim. | Site uses non-IP-based naming, or you want to test a specific prefix string. |
+| `-PromptForBuilding` | Prompts via `Read-Host` for the building code. | Manual / training scenarios where the operator types the code. |
+| `-SetDefault <share>` | Marks `\\<server>\<share>` as the default after install. Simulated under `-Test`. | Whenever a default is wanted. |
+| `-Force` | Reinstalls existing connections instead of skipping them. | Driver updates, stale connection cleanup. |
+
+**Precedence in `Auto` mode** (highest first):
+`-BuildingPrefix` → `-PromptForBuilding` → `-LocalIP` → NIC autodetect.
+
+### Reference: sample output
+
+Successful match (3 printers under building `2626`):
+
+```
+> .\Connect-ADPrintServer.ps1 -Test -LocalIP 10.26.26.47
+=== TEST MODE: no real print server will be contacted ===
+Print server: TESTSRV01
+Enumerating shared printers...
+Found 6 shared printer(s).
+Local IP (supplied): 10.26.26.47
+Building prefix: 2626
+Installing 3 printer connection(s)...
+  [TEST] Would connect: \\TESTSRV01\2626_Credentialing
+  [TEST] Would connect: \\TESTSRV01\2626_Pharmacy
+  [TEST] Would connect: \\TESTSRV01\2626_Reception
+
+Connection                       Status
+----------                       ------
+\\TESTSRV01\2626_Credentialing   TestSimulated
+\\TESTSRV01\2626_Pharmacy        TestSimulated
+\\TESTSRV01\2626_Reception       TestSimulated
+```
+
+No-match scenario (prefix has no printers):
+
+```
+> .\Connect-ADPrintServer.ps1 -Test -LocalIP 10.5.5.5
+=== TEST MODE: no real print server will be contacted ===
+Print server: TESTSRV01
+Enumerating shared printers...
+Found 6 shared printer(s).
+Local IP (supplied): 10.5.5.5
+Building prefix: 55
+No printers on 'TESTSRV01' have a name starting with '55'.
+```
+
+`-SetDefault` simulation:
+
+```
+> .\Connect-ADPrintServer.ps1 -Test -LocalIP 10.26.26.47 -SetDefault 2626_Credentialing
+...
+[TEST] Would set default printer to: \\TESTSRV01\2626_Credentialing
+```
+
+### Reference: internal helpers
+
+These are private functions inside `Connect-ADPrintServer.ps1`; documented
+here so you know what to grep for if you're tracing or extending the test
+path. None are exported.
+
+| Function | Purpose | `-Test` behavior |
+|---|---|---|
+| `Resolve-PrintServerName` | Strips `\\…\` and trims the `-PrintServer` argument. | Same. |
+| `Test-PrintServerReachable` | Pings the server with `Test-Connection`. | Not called. |
+| `Get-MockSharedPrinter` | Returns the static fixture in the table above. | Used as the data source. |
+| `Get-SharedPrinterOnServer -Test:$Test` | Real path: `Get-Printer -ComputerName <server>` with WMI fallback. | Returns `Get-MockSharedPrinter`. |
+| `Get-LocalBuildingNumber [-FromIP]` | Splits an IPv4 address into octets and concatenates octet 2 + octet 3. | Called with `-FromIP $LocalIP` when `-LocalIP` is supplied; otherwise reads the local NIC. |
+| `Get-ExistingConnection -Test:$Test` | Real path: `Get-Printer | Where Type -eq Connection`. | Returns `@()` so test runs aren't influenced by the local printer state. |
+| `Install-PrinterConnection -Test:$Test` | Real path: `Add-Printer -ConnectionName \\<server>\<share>`. | Logs `[TEST] Would connect: …` and returns `Status = TestSimulated`. |
+| `Set-DefaultPrinterByConnection -Test:$Test` | Real path: invokes `SetDefaultPrinter` on the matching `Win32_Printer`. | Logs `[TEST] Would set default printer to: …` and returns. |
+
+Run `Get-Help .\Connect-ADPrintServer.ps1 -Full` for the complete parameter
+documentation generated from the script's comment-based help.
+
 ### Removing test connections
 
 `-Test` never installs anything, so there's nothing to clean up. To remove a
