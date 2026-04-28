@@ -35,6 +35,15 @@
     Override the auto-detected building number. Useful on VPN or for testing
     (e.g. -BuildingPrefix 2626). Implies -AutoDetect.
 
+.PARAMETER PromptForBuilding
+    Prompt the operator to type a building code instead of detecting from IP.
+
+.PARAMETER Test
+    Run in offline test mode: skips reachability checks, uses a hard-coded list
+    of fake shared printers, and only simulates Add-Printer / SetDefaultPrinter.
+    -PrintServer becomes optional (defaults to TESTSRV01). Combine with any
+    selection mode (-AutoDetect, -PromptForBuilding, -All, etc.).
+
 .PARAMETER Force
     Reinstall a connection even if it already exists.
 
@@ -55,11 +64,19 @@
 
 .EXAMPLE
     .\Connect-ADPrintServer.ps1 -PrintServer PRINTSRV01 -BuildingPrefix 2626
+
+.EXAMPLE
+    # Offline test: pick the building interactively, simulate the install.
+    .\Connect-ADPrintServer.ps1 -Test -PromptForBuilding
+
+.EXAMPLE
+    # Offline test of auto-detect against a specific prefix, no real install.
+    .\Connect-ADPrintServer.ps1 -Test -BuildingPrefix 2626
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Interactive')]
 param(
-    [Parameter(Mandatory = $true, Position = 0)]
+    [Parameter(Position = 0)]
     [string]$PrintServer,
 
     [Parameter(ParameterSetName = 'ByName')]
@@ -77,9 +94,14 @@ param(
     [Parameter(ParameterSetName = 'Auto')]
     [string]$BuildingPrefix,
 
+    [Parameter(ParameterSetName = 'Auto')]
+    [switch]$PromptForBuilding,
+
     [string]$SetDefault,
 
-    [switch]$Force
+    [switch]$Force,
+
+    [switch]$Test
 )
 
 function Resolve-PrintServerName {
@@ -117,8 +139,21 @@ function Test-PrintServerReachable {
     }
 }
 
+function Get-MockSharedPrinter {
+    # Fixed sample data for offline testing.
+    @(
+        [pscustomobject]@{ Name='2626_Credentialing'; ShareName='2626_Credentialing'; DriverName='HP Universal Printing PCL 6'; Location='Bldg 2626 Floor 2'; Comment='Credentialing office'; PortName='IP_10.26.26.100' }
+        [pscustomobject]@{ Name='2626_Reception';     ShareName='2626_Reception';     DriverName='HP Universal Printing PCL 6'; Location='Bldg 2626 Lobby';   Comment='Front desk';            PortName='IP_10.26.26.101' }
+        [pscustomobject]@{ Name='2626_Pharmacy';      ShareName='2626_Pharmacy';      DriverName='HP Universal Printing PCL 6'; Location='Bldg 2626 Floor 1'; Comment='Pharmacy';              PortName='IP_10.26.26.102' }
+        [pscustomobject]@{ Name='1010_Lab';           ShareName='1010_Lab';           DriverName='HP Universal Printing PCL 6'; Location='Bldg 1010 Floor 3'; Comment='Lab';                   PortName='IP_10.10.10.50'  }
+        [pscustomobject]@{ Name='1010_Reception';     ShareName='1010_Reception';     DriverName='HP Universal Printing PCL 6'; Location='Bldg 1010 Lobby';   Comment='Front desk';            PortName='IP_10.10.10.51'  }
+        [pscustomobject]@{ Name='HR-Color';           ShareName='HR-Color';           DriverName='Xerox WorkCentre';            Location='HR Office';         Comment='Color shared';          PortName='IP_10.5.5.5'     }
+    )
+}
+
 function Get-SharedPrinterOnServer {
-    param([string]$Server)
+    param([string]$Server, [switch]$Test)
+    if ($Test) { return Get-MockSharedPrinter }
     try {
         Get-Printer -ComputerName $Server -ErrorAction Stop |
             Where-Object { $_.Shared -eq $true } |
@@ -138,6 +173,8 @@ function Get-SharedPrinterOnServer {
 }
 
 function Get-ExistingConnection {
+    param([switch]$Test)
+    if ($Test) { return @() }
     Get-Printer -ErrorAction SilentlyContinue |
         Where-Object { $_.Type -eq 'Connection' } |
         Select-Object -ExpandProperty Name
@@ -147,9 +184,14 @@ function Install-PrinterConnection {
     param(
         [string]$Server,
         [string]$Share,
-        [switch]$Force
+        [switch]$Force,
+        [switch]$Test
     )
     $connection = "\\$Server\$Share"
+    if ($Test) {
+        Write-Host "  [TEST] Would connect: $connection" -ForegroundColor Yellow
+        return [pscustomobject]@{ Connection = $connection; Status = 'TestSimulated' }
+    }
     $existing = Get-ExistingConnection
     if ($existing -contains $connection) {
         if ($Force) {
@@ -175,7 +217,11 @@ function Install-PrinterConnection {
 }
 
 function Set-DefaultPrinterByConnection {
-    param([string]$Connection)
+    param([string]$Connection, [switch]$Test)
+    if ($Test) {
+        Write-Host "[TEST] Would set default printer to: $Connection" -ForegroundColor Yellow
+        return
+    }
     try {
         $cim = Get-CimInstance -ClassName Win32_Printer -Filter "Name='$($Connection.Replace('\','\\'))'" -ErrorAction Stop
         if (-not $cim) { throw "Printer '$Connection' not found on local system." }
@@ -191,15 +237,30 @@ function Set-DefaultPrinterByConnection {
 
 # --- Main ---------------------------------------------------------------
 
+if ($Test) {
+    Write-Host "=== TEST MODE: no real print server will be contacted ===" -ForegroundColor Yellow
+}
+
+if (-not $PrintServer) {
+    if ($Test) {
+        $PrintServer = 'TESTSRV01'
+    } else {
+        $PrintServer = Read-Host 'Enter print server name (e.g. PRINTSRV01)'
+        if ([string]::IsNullOrWhiteSpace($PrintServer)) {
+            throw "PrintServer is required. Re-run with -PrintServer <name> (or pass -Test for offline testing)."
+        }
+    }
+}
+
 $server = Resolve-PrintServerName -Name $PrintServer
 Write-Host "Print server: $server" -ForegroundColor Cyan
 
-if (-not (Test-PrintServerReachable -Server $server)) {
+if (-not $Test -and -not (Test-PrintServerReachable -Server $server)) {
     Write-Warning "Print server '$server' did not respond to ping. Continuing anyway (ICMP may be blocked)."
 }
 
 Write-Host "Enumerating shared printers..." -ForegroundColor Cyan
-$shared = @(Get-SharedPrinterOnServer -Server $server)
+$shared = @(Get-SharedPrinterOnServer -Server $server -Test:$Test)
 if (-not $shared -or $shared.Count -eq 0) {
     throw "No shared printers were found on '$server'. Check permissions and the server name."
 }
@@ -215,7 +276,18 @@ $selected = switch ($PSCmdlet.ParameterSetName) {
         $nameMatches | Sort-Object ShareName -Unique
     }
     'Auto'        {
-        $prefix = if ($BuildingPrefix) { $BuildingPrefix } else { Get-LocalBuildingNumber }
+        $prefix =
+            if ($BuildingPrefix) {
+                $BuildingPrefix
+            } elseif ($PromptForBuilding) {
+                $entered = Read-Host 'Enter building number (e.g. 2626)'
+                if ([string]::IsNullOrWhiteSpace($entered)) {
+                    throw "Building number is required."
+                }
+                $entered.Trim()
+            } else {
+                Get-LocalBuildingNumber
+            }
         Write-Host "Building prefix: $prefix" -ForegroundColor Cyan
         $buildingMatches = $shared | Where-Object {
             $_.ShareName -like "$prefix*" -or $_.Name -like "$prefix*"
@@ -240,7 +312,7 @@ if (-not $selected -or @($selected).Count -eq 0) {
 Write-Host ("Installing {0} printer connection(s)..." -f @($selected).Count) -ForegroundColor Cyan
 $results = foreach ($p in $selected) {
     $share = if ($p.ShareName) { $p.ShareName } else { $p.Name }
-    Install-PrinterConnection -Server $server -Share $share -Force:$Force
+    Install-PrinterConnection -Server $server -Share $share -Force:$Force -Test:$Test
 }
 
 if ($SetDefault) {
@@ -250,7 +322,7 @@ if ($SetDefault) {
     } else {
         $defaultConnection = "\\$server\$defaultShare"
     }
-    Set-DefaultPrinterByConnection -Connection $defaultConnection
+    Set-DefaultPrinterByConnection -Connection $defaultConnection -Test:$Test
 }
 
 $results | Format-Table -AutoSize
