@@ -8,6 +8,12 @@
     interactive selection, installing every shared printer, or targeting specific
     printers by name. Optionally sets one of the connected printers as the default.
 
+    With no selection switch supplied, the script auto-detects the building number
+    from the local 10.x.x.x IPv4 address and installs every shared printer whose
+    name starts with that prefix. This is the unattended-friendly behavior used by
+    RMM tools (NinjaOne, Intune, GPO logon scripts). Pass -Interactive to get the
+    grid-view picker instead.
+
 .PARAMETER PrintServer
     Hostname (or FQDN) of the AD print server. Accepts forms like "PRINTSRV01",
     "PRINTSRV01.contoso.local", or "\\PRINTSRV01". Defaults to "azr01print01"
@@ -21,8 +27,8 @@
     Install every printer shared on the print server.
 
 .PARAMETER Interactive
-    Show a grid view to pick which printers to install. This is the default when
-    neither -PrinterName nor -All is supplied.
+    Show a grid view to pick which printers to install. Must be passed explicitly
+    — the default selection mode is now -AutoDetect (for unattended use).
 
 .PARAMETER SetDefault
     Share name of the printer to set as the default after installation.
@@ -30,7 +36,9 @@
 .PARAMETER AutoDetect
     Detect the local computer's building number from its 10.x.x.x IPv4 address by
     concatenating the second and third octets (e.g. 10.26.26.47 -> "2626"), then
-    install every shared printer whose share name starts with that prefix.
+    install every shared printer whose share name starts with that prefix. This
+    is the default selection mode when no other selection switch is supplied;
+    passing -AutoDetect explicitly is equivalent to running with no flags.
 
 .PARAMETER BuildingPrefix
     Override the auto-detected building number. Useful on VPN or for testing
@@ -96,7 +104,7 @@
     .\Connect-ADPrintServer.ps1 -Test -LocalIP 10.10.10.50
 #>
 
-[CmdletBinding(DefaultParameterSetName = 'Interactive')]
+[CmdletBinding(DefaultParameterSetName = 'Auto')]
 param(
     [Parameter(Position = 0)]
     [string]$PrintServer = 'azr01print01',

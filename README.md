@@ -34,24 +34,61 @@ prefix.
 
 ## Quick reference
 
-`-PrintServer` defaults to **`azr01print01`**, so you only need to pass it
-when targeting a different server. Under `-Test`, the default flips to
-`TESTSRV01` (still overridable).
+Defaults:
+
+- **`-PrintServer`** → `azr01print01` (under `-Test`, → `TESTSRV01`).
+- **Selection mode** → `-AutoDetect`. Running with no flags installs every
+  printer matching the workstation's building prefix; safe for unattended /
+  RMM execution.
 
 | Mode | Command |
 |---|---|
-| Interactive picker (default)   | `.\Connect-ADPrintServer.ps1` |
-| Install everything             | `.\Connect-ADPrintServer.ps1 -All` |
-| By name (wildcards OK)         | `.\Connect-ADPrintServer.ps1 -PrinterName 'HR-*','2626_Credentialing'` |
-| Auto-detect from local IP      | `.\Connect-ADPrintServer.ps1 -AutoDetect` |
-| Manual building prefix         | `.\Connect-ADPrintServer.ps1 -BuildingPrefix 2626` |
-| Prompt for building            | `.\Connect-ADPrintServer.ps1 -PromptForBuilding` |
-| Pretend a different IP         | `.\Connect-ADPrintServer.ps1 -LocalIP 10.26.26.47` |
-| Different print server         | `.\Connect-ADPrintServer.ps1 -PrintServer OTHERSRV -AutoDetect` |
-| Set default after install      | `.\Connect-ADPrintServer.ps1 -AutoDetect -SetDefault 2626_Credentialing` |
-| Reinstall existing             | `.\Connect-ADPrintServer.ps1 -AutoDetect -Force` |
+| Auto-detect from local IP (default) | `.\Connect-ADPrintServer.ps1` |
+| Install everything                  | `.\Connect-ADPrintServer.ps1 -All` |
+| Interactive picker                  | `.\Connect-ADPrintServer.ps1 -Interactive` |
+| By name (wildcards OK)              | `.\Connect-ADPrintServer.ps1 -PrinterName 'HR-*','2626_Credentialing'` |
+| Manual building prefix              | `.\Connect-ADPrintServer.ps1 -BuildingPrefix 2626` |
+| Prompt for building                 | `.\Connect-ADPrintServer.ps1 -PromptForBuilding` |
+| Pretend a different IP              | `.\Connect-ADPrintServer.ps1 -LocalIP 10.26.26.47` |
+| Different print server              | `.\Connect-ADPrintServer.ps1 -PrintServer OTHERSRV` |
+| Set default after install           | `.\Connect-ADPrintServer.ps1 -SetDefault 2626_Credentialing` |
+| Reinstall existing                  | `.\Connect-ADPrintServer.ps1 -Force` |
 
 Run `Get-Help .\Connect-ADPrintServer.ps1 -Full` for full parameter docs.
+
+## Unattended / RMM deployment (NinjaOne, Intune, GPO logon script)
+
+For zero-interaction execution, just call the script with no arguments:
+
+```powershell
+.\Connect-ADPrintServer.ps1
+```
+
+The default selection mode auto-detects the building from the local 10.x.x.x
+IP and connects to every matching printer on `\\azr01print01`.
+
+**Run as the logged-in user — not SYSTEM.** Printer connections installed by
+`Add-Printer -ConnectionName` go into the per-user printer store. If
+NinjaOne runs the script as the SYSTEM account, the printers install for
+SYSTEM and the logged-in user won't see them.
+
+NinjaOne configuration:
+- **Run As**: Logged-On User (not System).
+- **Architecture**: 64-bit.
+- **Script**: `Connect-ADPrintServer.ps1`.
+- **Arguments**: *(leave empty for the default behavior; or pass overrides
+  like `-PrintServer SOMETHING` or `-Force`)*.
+- **Execution policy**: NinjaOne already runs `.ps1` files via
+  `powershell -ExecutionPolicy Bypass`, so the wrapper isn't needed there.
+
+Equivalent for a Group Policy / scheduled-task logon script:
+
+```cmd
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "\\domain\netlogon\Connect-ADPrintServer.ps1"
+```
+
+Trigger: *At log on of any user*. Run with the user's token, not highest
+privileges.
 
 ## Running the script (execution policy)
 
